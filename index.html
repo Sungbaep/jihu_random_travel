@@ -1,0 +1,438 @@
+# -*- coding: utf-8 -*-
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+HTML_FILENAME = "pohang_overview_auto_paginate.html"
+PDF_FILENAME  = "포항여행일정.pdf"
+
+# 이미지 파일은 스크립트와 같은 폴더의 images/ 아래에 준비하세요.
+# 예) images/spacewalk.png, images/robolife.png, images/yeongildae.png, ...
+HTML_CONTENT = r"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>포항 여행 일정표</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+
+  :root{
+    --page-margin-mm: 10mm; /* 상하좌우 마진 */
+    --print-width-mm: calc(210mm - (2 * var(--page-margin-mm))); /* 190mm */
+    --print-height-mm: calc(297mm - (2 * var(--page-margin-mm))); /* 277mm */
+    --bg1:#667eea; --bg2:#764ba2; --blue:#4A90E2; --mint:#4ecdc4; --mint2:#44a08d;
+    --warn:#fff3cd; --warnText:#856404; --text:#333; --muted:#555;
+    --accent:#ff6b6b; --accent2:#feca57;
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:'Noto Sans KR', -apple-system, BlinkMacSystemFont,'Segoe UI','Malgun Gothic','Apple SD Gothic Neo', system-ui, sans-serif;
+    background:linear-gradient(135deg, var(--bg1) 0%, var(--bg2) 100%);
+    color:var(--text);
+    line-height:1.6;
+    padding:20px;
+  }
+
+  /* 페이지 프레임(A4 인쇄 가능영역과 동일) */
+  .page{
+    width: var(--print-width-mm);      /* 190mm */
+    min-height: var(--print-height-mm);/* 화면 표시용 최소 높이 */
+    margin: 0 auto 20px auto;
+    background:#fff;
+    border-radius:16px;
+    box-shadow:0 20px 40px rgba(0,0,0,.18);
+    overflow: hidden;
+    display:flex;
+    flex-direction:column;
+  }
+  .header{
+    background:linear-gradient(135deg, #ff6b6b 0%, #feca57 100%);
+    color:#fff; padding:16px 20px; text-align:center;
+  }
+  .header h1{margin:6px 0 0 0; font-size:2rem; font-weight:900; text-shadow:1px 1px 2px rgba(0,0,0,.25)}
+  .header p{margin:6px 0 0 0; opacity:.95}
+
+  .page-title{
+    background:linear-gradient(135deg, var(--mint) 0%, var(--mint2) 100%);
+    color:#fff; padding:14px 20px; text-align:center; font-size:1.5rem; font-weight:700
+  }
+
+  .content{ padding: 14px 16px 18px 16px; display:block }
+
+  /* 카드/블록 (자동 페이지네이션 단위) */
+  .block{ background:#f8f9ff; border-radius:14px; padding:16px; margin:12px 0; border-left:6px solid var(--mint); }
+  .block.header-card{ background:transparent; border-left:none; padding:0; margin:0 0 12px 0; }
+  .day-overview{ border-left-color: var(--accent); }
+  .day-overview:nth-of-type(2){ border-left-color: var(--mint); }
+  .day-overview:nth-of-type(3){ border-left-color: var(--accent2); }
+  .day-header{ font-size:1.3rem; font-weight:700; display:flex; align-items:center; gap:10px; margin-bottom:10px }
+
+  .schedule-item{ display:grid; grid-template-columns:80px 1fr; gap:12px; align-items:center; padding:6px 0 }
+  .schedule-time{ background:var(--accent); color:#fff; padding:6px 8px; border-radius:8px; text-align:center; font-weight:700; font-size:.95rem }
+  .day-overview:nth-of-type(2) .schedule-time{ background: var(--mint) }
+  .day-overview:nth-of-type(3) .schedule-time{ background: var(--accent2); color:#333 }
+
+  .location-header{ display:flex; align-items:center; gap:12px; margin-bottom:10px }
+  .location-icon{
+    width:48px;height:48px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:1.5rem;
+    background:linear-gradient(135deg, var(--mint), var(--mint2));
+  }
+  .location-name{ font-size:1.3rem; font-weight:700; color:#2c3e50 }
+  .time-info{ margin-left:auto; background:var(--warn); color:var(--warnText); padding:6px 10px; border-radius:18px; font-size:.95rem; font-weight:600 }
+
+  .description{ color:var(--muted) }
+  .fun-fact{ background:linear-gradient(135deg,#a8e6cf,#dcedc1); padding:10px; border-radius:10px; border-left:4px solid var(--mint); margin-top:8px }
+  .fun-fact-title{ font-weight:700; color:#2c5530; margin-bottom:4px }
+
+  /* 이미지 컨테이너 + 실제 이미지 */
+  .image-placeholder {
+    width: 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    display: block;
+    margin-top: 10px;
+    background:#eef3ff;
+  }
+  .image-placeholder img{
+    width:100%;
+    height:auto;
+    display:block;
+  }
+
+  /* === Day 개요 3개를 한 장에 표시하기 위한 콤팩트 스타일 === */
+  .overview-page .content {
+    padding: 10mm 10mm; /* 인쇄가능 영역 내 여유 */
+  }
+  .day-overview.compact {
+    border-left-width: 5px;
+    border-radius: 12px;
+    padding: 12px;
+    margin: 8px 0;
+  }
+  .day-overview.compact .day-header {
+    font-size: 1.1rem;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .day-overview.compact .schedule-item {
+    grid-template-columns: 60px 1fr; /* 시간 폭 줄임 */
+    gap: 8px;
+    padding: 4px 0;
+    margin: 0;
+  }
+  .day-overview.compact .schedule-time {
+    padding: 4px 6px;
+    font-size: 0.85rem;
+    border-radius: 6px;
+  }
+
+  /* 인쇄 */
+  @page { size: A4; margin: var(--page-margin-mm); }
+  @media print{
+    body{ background:#fff; padding:0 }
+    .page{
+      width: var(--print-width-mm);
+      height: var(--print-height-mm);   /* 인쇄 가능 높이와 정확히 일치 */
+      margin: 0 auto;
+      border-radius:0;
+      box-shadow:none;
+      page-break-after: always;
+      overflow: visible !important;
+    }
+    .page:last-child{ page-break-after: auto }
+    .block{ break-inside: avoid; page-break-inside: avoid }
+    img, .image-placeholder{ max-width:100%; height:auto }
+    /* 고정 개요 1페이지는 꼭 1장에 들어가도록 */
+    .page.overview-page {
+      width: var(--print-width-mm);
+      height: var(--print-height-mm);
+      page-break-after: always;
+    }
+  }
+
+  /* 화면용 안내 */
+  .note{ color:#fff; opacity:.8; text-align:center; margin:12px 0 }
+</style>
+</head>
+<body>
+  <!-- 1mm를 px로 환산하기 위한 보정 엘리먼트 -->
+  <div id="mm-calib" style="position:absolute; visibility:hidden; height:1mm; width:1mm; left:-9999px; top:-9999px;"></div>
+
+  <!-- 표지 -->
+  <section class="page overview-page">
+    <div class="header">
+      <h1>🗺️ 3일 개요 한눈에 보기</h1>
+      <p>Day 1 · Day 2 · Day 3 Overview</p>
+    </div>
+    <div class="content">
+      <!-- Day 1 -->
+      <div class="block day-overview compact">
+        <div class="day-header"><span>🚗</span><span>첫째 날 - 김포에서 포항으로!</span></div>
+        <div class="schedule-item"><div class="schedule-time">08:30</div><div>김포 출발 🏠</div></div>
+        <div class="schedule-item"><div class="schedule-time">13:30</div><div>환호공원 스페이스 워크 도착 🌉</div></div>
+        <div class="schedule-item"><div class="schedule-time">14:30</div><div>로보라이프 뮤지엄 관람 🤖</div></div>
+        <div class="schedule-item"><div class="schedule-time">15:40</div><div>숙소 체크인 🏨</div></div>
+        <div class="schedule-item"><div class="schedule-time">17:00</div><div>영일대 해수욕장 산책 🏖️</div></div>
+        <div class="schedule-item"><div class="schedule-time">18:30</div><div>저녁식사 (해변 횟집) 🍣</div></div>
+      </div>
+
+      <!-- Day 2 -->
+      <div class="block day-overview compact">
+        <div class="day-header"><span>🌅</span><span>둘째 날 - 호미곶과 구룡포 탐험!</span></div>
+        <div class="schedule-item"><div class="schedule-time">10:00</div><div>숙소 출발 → 호미곶으로 🚗</div></div>
+        <div class="schedule-item"><div class="schedule-time">10:50</div><div>호미곶 '상생의 손' 구경 👋</div></div>
+        <div class="schedule-item"><div class="schedule-time">11:20</div><div>등대박물관 관람 🏮</div></div>
+        <div class="schedule-item"><div class="schedule-time">12:30</div><div>점심식사 (회정식) 🍽️</div></div>
+        <div class="schedule-item"><div class="schedule-time">13:30</div><div>구룡포 근대문화거리 🏘️</div></div>
+        <div class="schedule-item"><div class="schedule-time">15:00</div><div>구룡포 바닷가 놀이터 🎠</div></div>
+        <div class="schedule-item"><div class="schedule-time">19:30</div><div>영일대 해상스카이워크 (노을) 🌅</div></div>
+      </div>
+
+      <!-- Day 3 -->
+      <div class="block day-overview compact">
+        <div class="day-header"><span>🚢</span><span>셋째 날 - 포항운하와 집으로!</span></div>
+        <div class="schedule-item"><div class="schedule-time">10:00</div><div>숙소 출발 → 포항운하 🚗</div></div>
+        <div class="schedule-item"><div class="schedule-time">10:15</div><div>포항운하 크루즈 체험 ⛵</div></div>
+        <div class="schedule-item"><div class="schedule-time">11:30</div><div>운하 주변 카페 휴식 ☕</div></div>
+        <div class="schedule-item"><div class="schedule-time">12:30</div><div>점심식사 🍽️</div></div>
+        <div class="schedule-item"><div class="schedule-time">13:30</div><div>김포로 출발! 🏠</div></div>
+        <div class="schedule-item"><div class="schedule-time">18:30</div><div>김포 도착! 🎉</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 자동 페이지네이션 대상: 이 안의 .block 들이 A4 높이에 맞춰 여러 .page로 분리됨 -->
+  <div id="auto-flow" style="max-width:1000px; margin:0 auto;">
+    <!-- 상세 설명들(각 location을 block으로) -->
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">🌉</div>
+        <div class="location-name">스페이스 워크 (환호공원)</div>
+        <div class="time-info">13:30 - 14:05</div>
+      </div>
+      <div class="description">하늘 위를 걷는 것 같은 신기한 다리예요! 25미터 높이에서 바다를 내려다볼 수 있어요. 길이가 333미터나 되고, 계단이 717개나 있는 정말 큰 다리랍니다. 철과 빛의 도시 포항을 상징하는 아름다운 곡선 모양이에요. 밤에는 예쁜 조명이 켜져서 더욱 멋져요.</div>
+      <div class="fun-fact"><div class="fun-fact-title">🌟 재미있는 사실!</div>중간에 360도 돌아가는 구간이 있어서 사진 찍기 정말 좋아요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_234124.png" alt="스페이스 워크">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">🤖</div>
+        <div class="location-name">로보라이프 뮤지엄</div>
+        <div class="time-info">14:30 - 15:30</div>
+      </div>
+      <div class="description">로봇들과 함께 놀 수 있는 신나는 박물관이에요! 로봇이 춤추고, 노래하고, 말도 할 수 있어요. VR/AR 체험도 가능하고, 미래 기술을 직접 경험할 수 있어요.</div>
+      <div class="fun-fact"><div class="fun-fact-title">🤖 재미있는 사실!</div>로봇과 함께 사진도 찍을 수 있어요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_235045.png" alt="로보라이프뮤지엄">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">🏖️</div>
+        <div class="location-name">영일대 해수욕장</div>
+        <div class="time-info">17:00 - 18:30</div>
+      </div>
+      <div class="description">넓고 깨끗한 바닷가예요! 파도소리를 들으며 산책할 수 있고, 모래사장에서 뛰어놀 수도 있어요. 저녁에는 해가 바다 쪽으로 지는 모습을 볼 수 있어요.</div>
+      <div class="fun-fact"><div class="fun-fact-title">🌅 재미있는 사실!</div>영일대는 포항에서 가장 유명한 바닷가 중 하나예요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_235132.png" alt="영일대 해수욕장">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">👋</div>
+        <div class="location-name">호미곶 '상생의 손'</div>
+        <div class="time-info">10:50 - 11:20</div>
+      </div>
+      <div class="description">바닷가에 있는 큰 손 조각상으로, 상생의 의미를 담고 있어요. 한국에서 해가 가장 먼저 뜨는 곳으로도 유명합니다.</div>
+      <div class="fun-fact"><div class="fun-fact-title">🌅 재미있는 사실!</div>호미곶은 한반도에서 해가 가장 먼저 뜨는 곳이에요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_235205.png" alt="호미곶, 상생의 손">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">🏮</div>
+        <div class="location-name">등대박물관</div>
+        <div class="time-info">11:20 - 12:20</div>
+      </div>
+      <div class="description">등대의 역사와 역할을 배우고, 전시물을 관람할 수 있어요. 바다 안전에 중요한 등대의 기능을 알 수 있습니다.</div>
+      <div class="fun-fact"><div class="fun-fact-title">💡 재미있는 사실!</div>등대는 배들의 길잡이 역할을 해요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_235250.png" alt="등대박물관">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">🏘️</div>
+        <div class="location-name">구룡포 근대문화거리</div>
+        <div class="time-info">13:30 - 15:00</div>
+      </div>
+      <div class="description">근대 가옥과 거리 풍경이 보존된 구역으로, 드라마 촬영지로도 유명해요. 골목 사진 촬영에 좋아요.</div>
+      <div class="fun-fact"><div class="fun-fact-title">🐉 재미있는 사실!</div>구룡포는 '9마리 용의 포구'라는 뜻이에요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_235324.png" alt="구룡포 근대문화거리">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">🌉</div>
+        <div class="location-name">영일대 해상스카이워크</div>
+        <div class="time-info">19:30 - 20:30</div>
+      </div>
+      <div class="description">바다 위로 뻗은 투명 데크에서 바닷물을 내려다볼 수 있어 짜릿합니다. 야간 조명이 아름다워요.</div>
+      <div class="fun-fact"><div class="fun-fact-title">🌊 재미있는 사실!</div>유리바닥을 통해 바다 속을 들여다볼 수 있어요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_235408.png" alt="해상스카이워크">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="location-header">
+        <div class="location-icon">🚢</div>
+        <div class="location-name">포항운하 크루즈</div>
+        <div class="time-info">10:15 - 11:05</div>
+      </div>
+      <div class="description">포항 시내를 물길로 감상하는 50분 코스. 바람이 시원하고 전망이 좋습니다.</div>
+      <div class="fun-fact"><div class="fun-fact-title">⛵ 재미있는 사실!</div>포항운하는 바다와 도시를 연결하는 특별한 물길이에요!</div>
+      <div class="image-placeholder">
+        <img src="file:///C:/Users/박성배/Documents/VS/20250812_235445.png" alt="포항운하 크루즈">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="block tips-section" style="background:#e8f4fd;border:2px solid #3498db;border-radius:14px">
+        <div style="font-size:1.2rem; font-weight:700; color:#2980b9; display:flex; gap:8px; align-items:center; margin-bottom:8px">
+          <span>💡</span><span>여행 준비물과 팁</span>
+        </div>
+        <div style="color:#34495e">
+          <strong>🎒 챙겨갈 것들:</strong><br>
+          • 편한 운동화 (많이 걸어요!)<br>
+          • 모자와 선크림 (햇빛이 강해요)<br>
+          • 카메라나 핸드폰 (예쁜 사진 찍기)<br>
+          • 간식과 물 (배고플 때 먹어요)<br><br>
+          <strong>🌟 재미있게 여행하는 방법:</strong><br>
+          • 궁금한 것은 언제든 질문하기<br>
+          • 새로운 음식도 용기내서 맛보기<br>
+          • 가족과 함께 많은 사진 찍기<br>
+          • 여행 일기 쓰기 (나중에 추억이 돼요!)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">화면에서는 길게 보이지만, PDF로 저장할 때 A4 높이에 맞춰 자동으로 페이지가 나뉩니다.</div>
+
+<script>
+/**
+ * A4 인쇄 가능 높이(= 297mm - 상하 마진*2) 기준으로
+ * #auto-flow 안의 .block 요소들을 여러 .page로 자동 분배합니다.
+ * (개요 3개는 overview-page에 이미 고정되어 있으므로 제외)
+ */
+(function(){
+  const mmEl = document.getElementById('mm-calib');
+  const pxPerMm = mmEl.getBoundingClientRect().height || 3.78; // 대략값 fallback
+
+  const PRINT_W_MM = 210 - 20;  // 좌우 10mm 마진 → 190mm
+  const PRINT_H_MM = 297 - 20;  // 상하 10mm 마진 → 277mm
+
+  const pageWidthPx  = PRINT_W_MM * pxPerMm;
+  const pageHeightPx = PRINT_H_MM * pxPerMm;
+
+  const flow = document.getElementById('auto-flow');
+  const blocks = Array.from(flow.children);
+
+  // 결과를 담을 컨테이너
+  const book = document.createElement('div');
+  book.id = 'book';
+  document.body.insertBefore(book, flow);
+  flow.style.display = 'none'; // 원본 숨김
+
+  function createPage(){
+    const p = document.createElement('section');
+    p.className = 'page';
+    const content = document.createElement('div');
+    content.className = 'content';
+    p.appendChild(content);
+    book.appendChild(p);
+    return p;
+  }
+
+  // 페이지 생성 & 배치
+  let page = createPage();
+  const pageInnerTopBottomPadding = 16 + 18; // .content 상하 패딩(px) 대략 반영
+
+  blocks.forEach(block => {
+    // 임시로 현재 페이지에 붙여서 높이 측정
+    page.querySelector('.content').appendChild(block);
+    const contentRect = page.querySelector('.content').getBoundingClientRect();
+    const blockRect = block.getBoundingClientRect();
+
+    // 현재 페이지에서 block이 넘어가는지 판단
+    const contentUsed = (blockRect.bottom - contentRect.top) + pageInnerTopBottomPadding;
+    const overflow = contentUsed > pageHeightPx;
+
+    if (overflow) {
+      // 새 페이지 만들어서 그쪽으로 이동
+      page.querySelector('.content').removeChild(block);
+      page = createPage();
+      page.querySelector('.content').appendChild(block);
+
+      // 만약 block 자체가 한 페이지보다 클 정도로 매우 크다면(극히 드묾),
+      // 해당 블록은 한 페이지에 고정 배치하고(잘림 방지), 필요시 수동 분할 권장
+      const bRect = block.getBoundingClientRect();
+      const bHeight = bRect.height + pageInnerTopBottomPadding;
+      if (bHeight > pageHeightPx) {
+        block.style.pageBreakInside = 'avoid';
+        block.style.breakInside = 'avoid';
+      }
+    }
+  });
+
+  // 페이지네이션 끝 신호
+  window.PAGINATION_DONE = true;
+})();
+</script>
+</body>
+</html>
+"""
+
+def save_html(path: Path):
+    path.write_text(HTML_CONTENT, encoding="utf-8")
+    print(f"[OK] HTML 저장: {path.resolve()}")
+
+def export_pdf_with_playwright(html_path: Path, pdf_path: Path):
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(html_path.resolve().as_uri(), wait_until="load")
+        # 페이지네이션 완료 신호 대기
+        page.wait_for_function("window.PAGINATION_DONE === true")
+        page.pdf(
+            path=str(pdf_path),
+            format="A4",
+            print_background=True,
+            margin={"top":"10mm","right":"10mm","bottom":"10mm","left":"10mm"},
+            prefer_css_page_size=True,
+            scale=1.0  # 잘리면 0.98~0.95로 미세 조정
+        )
+        browser.close()
+    print(f"[OK] PDF 생성: {pdf_path.resolve()}")
+
+if __name__ == "__main__":
+    html_path = Path(HTML_FILENAME)
+    pdf_path = Path(PDF_FILENAME)
+    save_html(html_path)
+    export_pdf_with_playwright(html_path, pdf_path)
