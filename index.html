@@ -1,13 +1,3 @@
-# -*- coding: utf-8 -*-
-from pathlib import Path
-from playwright.sync_api import sync_playwright
-
-HTML_FILENAME = "pohang_overview_auto_paginate.html"
-PDF_FILENAME  = "포항여행일정.pdf"
-
-# 이미지 파일은 스크립트와 같은 폴더의 images/ 아래에 준비하세요.
-# 예) images/spacewalk.png, images/robolife.png, images/yeongildae.png, ...
-HTML_CONTENT = r"""<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
@@ -333,8 +323,6 @@ HTML_CONTENT = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="note">화면에서는 길게 보이지만, PDF로 저장할 때 A4 높이에 맞춰 자동으로 페이지가 나뉩니다.</div>
-
 <script>
 /**
  * A4 인쇄 가능 높이(= 297mm - 상하 마진*2) 기준으로
@@ -407,32 +395,3 @@ HTML_CONTENT = r"""<!DOCTYPE html>
 </script>
 </body>
 </html>
-"""
-
-def save_html(path: Path):
-    path.write_text(HTML_CONTENT, encoding="utf-8")
-    print(f"[OK] HTML 저장: {path.resolve()}")
-
-def export_pdf_with_playwright(html_path: Path, pdf_path: Path):
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.goto(html_path.resolve().as_uri(), wait_until="load")
-        # 페이지네이션 완료 신호 대기
-        page.wait_for_function("window.PAGINATION_DONE === true")
-        page.pdf(
-            path=str(pdf_path),
-            format="A4",
-            print_background=True,
-            margin={"top":"10mm","right":"10mm","bottom":"10mm","left":"10mm"},
-            prefer_css_page_size=True,
-            scale=1.0  # 잘리면 0.98~0.95로 미세 조정
-        )
-        browser.close()
-    print(f"[OK] PDF 생성: {pdf_path.resolve()}")
-
-if __name__ == "__main__":
-    html_path = Path(HTML_FILENAME)
-    pdf_path = Path(PDF_FILENAME)
-    save_html(html_path)
-    export_pdf_with_playwright(html_path, pdf_path)
